@@ -313,7 +313,7 @@ class AnalysisRuntime:
         if self.device == "mps":
             torch.mps.synchronize()
 
-        default_layer = min(20, layers[-1])
+        default_layer = min(16, layers[-1])
         return {
             "provenance": "real-jacobian-lens",
             "prompt": prompt,
