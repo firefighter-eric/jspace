@@ -1,0 +1,34 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+.ipynb_checkpoints/
+node_modules/
+
+# Local settings and OS/editor noise
+.DS_Store
+.env
+.env.*
+!.env.example
+.idea/
+.vscode/
+*.log
+
+# Local model/lens weights and experiment outputs
+/artifacts/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.gguf
+
+# Generated slice pages (keep jlens/data/slice_vis.html)
+/slice*.html
+/slices/
