@@ -1,3 +1,4 @@
+# Modified for the jspace project; core jlens code is Copyright Anthropic PBC.
 [build-system]
 requires = ["setuptools>=64"]
 build-backend = "setuptools.build_meta"
@@ -5,7 +6,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "jlens"
 version = "0.1.0"
-description = "Companion code for 'Verbalizable Representations Form a Global Workspace in Language Models'"
+description = "Anthropic Jacobian Lens reference code with a local J-Space observatory"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
@@ -17,7 +18,8 @@ dependencies = [
 ]
 
 [project.urls]
-Repository = "https://github.com/anthropics/jacobian-lens"
+Repository = "https://github.com/firefighter-eric/jspace"
+Upstream = "https://github.com/anthropics/jacobian-lens"
 Paper = "https://transformer-circuits.pub/2026/workspace/index.html"
 
 [project.optional-dependencies]
@@ -33,6 +35,7 @@ ignore = ["E501", "E741"]
 
 [tool.setuptools]
 packages = ["jlens", "jspace_server"]
+include-package-data = false
 
 [tool.setuptools.package-data]
 jlens = ["data/*"]

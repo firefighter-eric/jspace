@@ -5,7 +5,7 @@
 目标是确认导入内容完整且本地运行环境可靠。
 
 1. 运行官方单元测试。
-2. 加载 `Qwen/Qwen3.5-4B` 与官方预拟合 lens。
+2. 加载 `Qwen/Qwen3.5-4B` 与 Anthropic walkthrough 指定的预拟合 lens。
 3. 运行 walkthrough 的多跳 prompt。
 4. 比较 J-lens 与 logit lens 的逐层 top-k。
 5. 生成一个自包含的 slice HTML 页面。

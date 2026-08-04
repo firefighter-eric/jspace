@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -11,6 +12,20 @@ from typing import Any
 from jspace_server.runtime import AnalysisRuntime
 
 RUNTIME = AnalysisRuntime()
+ALLOWED_ORIGIN = "http://127.0.0.1:5174"
+ANALYSIS_GATE = threading.BoundedSemaphore(1)
+
+
+def _origin_allowed(origin: str | None) -> bool:
+    """Allow direct local clients and the fixed Vite development origin."""
+    return origin is None or origin == ALLOWED_ORIGIN
+
+
+def _is_json_content_type(value: str | None) -> bool:
+    return (
+        value is not None
+        and value.partition(";")[0].strip().lower() == "application/json"
+    )
 
 
 class ObservatoryHandler(BaseHTTPRequestHandler):
@@ -20,18 +35,27 @@ class ObservatoryHandler(BaseHTTPRequestHandler):
         body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode(
             "utf-8"
         )
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("Access-Control-Allow-Origin", "http://127.0.0.1:5174")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Access-Control-Allow-Origin", ALLOWED_ORIGIN)
+            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            # The browser may abort a fetch when navigating away. The model
+            # run cannot be interrupted safely, but the server should remain
+            # quiet and healthy when the response is no longer wanted.
+            return
 
     def do_OPTIONS(self) -> None:  # noqa: N802
+        if not _origin_allowed(self.headers.get("Origin")):
+            self._send_json({"error": "origin not allowed"}, HTTPStatus.FORBIDDEN)
+            return
         self.send_response(HTTPStatus.NO_CONTENT)
-        self.send_header("Access-Control-Allow-Origin", "http://127.0.0.1:5174")
+        self.send_header("Access-Control-Allow-Origin", ALLOWED_ORIGIN)
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
@@ -45,6 +69,21 @@ class ObservatoryHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         if self.path != "/api/analyze":
             self._send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
+            return
+        if not _origin_allowed(self.headers.get("Origin")):
+            self._send_json({"error": "origin not allowed"}, HTTPStatus.FORBIDDEN)
+            return
+        if not _is_json_content_type(self.headers.get("Content-Type")):
+            self._send_json(
+                {"error": "Content-Type must be application/json"},
+                HTTPStatus.UNSUPPORTED_MEDIA_TYPE,
+            )
+            return
+        if not ANALYSIS_GATE.acquire(blocking=False):
+            self._send_json(
+                {"error": "an analysis is already running; try again shortly"},
+                HTTPStatus.TOO_MANY_REQUESTS,
+            )
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
@@ -66,6 +105,8 @@ class ObservatoryHandler(BaseHTTPRequestHandler):
                 {"error": f"{type(exc).__name__}: {exc}"},
                 HTTPStatus.INTERNAL_SERVER_ERROR,
             )
+        finally:
+            ANALYSIS_GATE.release()
 
     def log_message(self, message: str, *args: object) -> None:
         print(f"[jspace-api] {self.address_string()} {message % args}", flush=True)

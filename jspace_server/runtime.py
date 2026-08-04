@@ -23,10 +23,18 @@ from jlens.hooks import ActivationRecorder
 from jlens.vis import _meaningful_token_mask, _ranks_of
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_MODEL_PATH = Path("/Users/eric/models/Qwen/Qwen3.5-4B")
-DEFAULT_LENS_PATH = (
-    PROJECT_ROOT / "artifacts/lenses/Qwen3.5-4B_jacobian_lens_n1000.pt"
-)
+DEFAULT_MODEL_PATH = Path(
+    os.environ.get(
+        "JSPACE_MODEL_PATH", str(Path.home() / "models/Qwen/Qwen3.5-4B")
+    )
+).expanduser()
+DEFAULT_LENS_PATH = Path(
+    os.environ.get(
+        "JSPACE_LENS_PATH",
+        str(PROJECT_ROOT / "artifacts/lenses/Qwen3.5-4B_jacobian_lens_n1000.pt"),
+    )
+).expanduser()
+MAX_TRACKED_TOKENS = 2048
 
 
 def _device_name() -> str:
@@ -122,15 +130,14 @@ class AnalysisRuntime:
         top_k: int = 8,
         max_tokens: int = 64,
     ) -> dict[str, Any]:
-        prompt = prompt.strip()
-        if not prompt:
+        if not prompt.strip():
             raise ValueError("prompt must not be empty")
         if len(prompt) > 4000:
             raise ValueError("prompt is too long (maximum 4000 characters)")
         if not 2 <= top_k <= 12:
             raise ValueError("top_k must be between 2 and 12")
-        if not 4 <= max_tokens <= 128:
-            raise ValueError("max_tokens must be between 4 and 128")
+        if not 4 <= max_tokens <= 64:
+            raise ValueError("max_tokens must be between 4 and 64")
 
         self.ensure_loaded()
         assert self._model is not None
@@ -154,7 +161,12 @@ class AnalysisRuntime:
 
         final_layer = model.n_layers - 1
         layers = sorted(set(lens.source_layers) | {final_layer})
-        input_ids = model.encode(prompt, max_length=max_tokens)
+        # Encode one token beyond the display limit so truncation is exact.
+        # The prompt itself is intentionally not stripped: official eval
+        # prompts use a trailing space as a real tokenizer position.
+        encoded_ids = model.encode(prompt, max_length=max_tokens + 1)
+        truncated = encoded_ids.shape[1] > max_tokens
+        input_ids = encoded_ids[:, :max_tokens]
         token_ids = input_ids[0].tolist()
         token_text = [
             tokenizer.decode([token_id], clean_up_tokenization_spaces=False)
@@ -173,11 +185,10 @@ class AnalysisRuntime:
                 residual = lens.transport(residual, layer)
             return model.unembed(residual).float().detach()
 
-        # Match Anthropic's Qwen walkthrough: choose display candidates with
+        # Match Anthropic's Qwen walkthrough: choose readable candidates with
         # ``mask_display=True`` semantics, but retain their true full-vocab
-        # ranks and probabilities.  The unfiltered final-layer distribution is
-        # returned separately so the UI never confuses a readable lens token
-        # with the model's literal next-token prediction.
+        # ranks and probabilities.  Keep the literal unfiltered Top-K beside
+        # each cell so the UI can switch modes without another model run.
         rows: list[list[dict[str, Any]]] = []
         score_by_token: dict[int, float] = {}
         vocab_ids = set(token_ids)
@@ -200,12 +211,17 @@ class AnalysisRuntime:
             log_partition = torch.logsumexp(logits, dim=-1, keepdim=True)
             top_probabilities = torch.exp(top_values - log_partition)
             logit_gaps = top_values[:, 0] - top_values[:, 1]
+            raw_values, raw_ids = logits.topk(top_k, dim=-1)
+            raw_probabilities = torch.exp(raw_values - log_partition)
 
             ids_cpu = top_ids.cpu().tolist()
             values_cpu = top_values.cpu().tolist()
             ranks_cpu = top_ranks.cpu().tolist()
             probabilities_cpu = top_probabilities.cpu().tolist()
             gaps_cpu = logit_gaps.cpu().tolist()
+            raw_ids_cpu = raw_ids.cpu().tolist()
+            raw_values_cpu = raw_values.cpu().tolist()
+            raw_probabilities_cpu = raw_probabilities.cpu().tolist()
             row: list[dict[str, Any]] = []
             current_top_ids: list[int] = []
             for position, candidate_ids in enumerate(ids_cpu):
@@ -227,6 +243,27 @@ class AnalysisRuntime:
                             "logit": values_cpu[position][rank],
                         }
                     )
+                raw_candidates = []
+                for raw_rank, token_id in enumerate(
+                    raw_ids_cpu[position], start=1
+                ):
+                    score_by_token[token_id] = score_by_token.get(token_id, 0.0) + (
+                        1.0 / raw_rank
+                    )
+                    vocab_ids.add(token_id)
+                    raw_candidates.append(
+                        {
+                            "id": token_id,
+                            "token": tokenizer.decode(
+                                [token_id], clean_up_tokenization_spaces=False
+                            ),
+                            "rank": raw_rank,
+                            "probability": raw_probabilities_cpu[position][
+                                raw_rank - 1
+                            ],
+                            "logit": raw_values_cpu[position][raw_rank - 1],
+                        }
+                    )
                 top_id = candidate_ids[0]
                 current_top_ids.append(top_id)
                 row.append(
@@ -241,50 +278,39 @@ class AnalysisRuntime:
                             and previous_top_ids[position] != top_id
                         ),
                         "candidates": candidates,
+                        "raw_candidates": raw_candidates,
                     }
                 )
             rows.append(row)
             previous_top_ids = current_top_ids
 
             if layer == final_layer:
-                raw_values, raw_ids = logits.topk(top_k, dim=-1)
-                raw_probabilities = torch.exp(raw_values - log_partition)
-                raw_ids_cpu = raw_ids.cpu().tolist()
-                raw_values_cpu = raw_values.cpu().tolist()
-                raw_probabilities_cpu = raw_probabilities.cpu().tolist()
-                for position, candidate_ids in enumerate(raw_ids_cpu):
-                    candidates = []
-                    for raw_rank, token_id in enumerate(candidate_ids, start=1):
-                        vocab_ids.add(token_id)
-                        candidates.append(
-                            {
-                                "id": token_id,
-                                "token": tokenizer.decode(
-                                    [token_id], clean_up_tokenization_spaces=False
-                                ),
-                                "rank": raw_rank,
-                                "probability": raw_probabilities_cpu[position][
-                                    raw_rank - 1
-                                ],
-                                "logit": raw_values_cpu[position][raw_rank - 1],
-                            }
-                        )
+                for candidates in (cell["raw_candidates"] for cell in row):
                     final_outputs.append(
                         {
-                            "top_id": candidate_ids[0],
+                            "top_id": candidates[0]["id"],
                             "top_token": candidates[0]["token"],
                             "top_probability": candidates[0]["probability"],
                             "candidates": candidates,
                         }
                     )
-                del raw_values, raw_ids, raw_probabilities
 
-            del logits, top_values, top_ids, top_ranks, top_probabilities
+            del (
+                logits,
+                top_values,
+                top_ids,
+                top_ranks,
+                top_probabilities,
+                raw_values,
+                raw_ids,
+                raw_probabilities,
+            )
 
-        # Anthropic's default slice path tracks every token that appears in any
-        # readable Top-K cell and loads its full-vocab rank tensor when pinned.
+        # Track every token that appears in either Top-K view so readable and
+        # raw candidates can both be pinned without another model run.
         by_score = sorted(score_by_token, key=score_by_token.__getitem__, reverse=True)
-        tracked_token_ids = sorted(by_score)
+        tracked_token_ids = sorted(by_score[:MAX_TRACKED_TOKENS])
+        rank_tracks_truncated = len(by_score) > MAX_TRACKED_TOKENS
         rank_tracks: dict[str, list[list[int]]] = {
             str(token_id): [] for token_id in tracked_token_ids
         }
@@ -335,10 +361,12 @@ class AnalysisRuntime:
             "final_outputs": final_outputs,
             "tracked_token_ids": tracked_token_ids,
             "rank_tracks": rank_tracks,
+            "rank_tracks_truncated": rank_tracks_truncated,
+            "max_tracked_tokens": MAX_TRACKED_TOKENS,
             "vocab": vocab,
             "default_selection": {
                 "layer": default_layer,
                 "position": max(0, len(token_ids) - 1),
             },
-            "truncated": len(token_ids) >= max_tokens,
+            "truncated": truncated,
         }

@@ -1,6 +1,9 @@
 # jlens — Jacobian lens
 
-> **Reference implementation.** Not maintained and not accepting contributions.
+> **Upstream attribution.** The core `jlens` implementation was imported from
+> Anthropic's Apache-2.0 reference repository, which Anthropic describes as
+> unmaintained. This fork adds the J-Space runtime, interactive UI, tests, and
+> documentation; those files are maintained in this repository.
 
 Companion code for [**Verbalizable Representations Form a Global Workspace in
 Language Models**](https://transformer-circuits.pub/2026/workspace/index.html).
@@ -41,18 +44,20 @@ npm install
 npm run dev
 ```
 
-然后打开 <http://127.0.0.1:5174>。页面支持官方评测样本切换、
-Layer × Position 热力图、Rank/Probability 视图、概念固定、层间轨迹和
-当前单元导出。
+然后打开 <http://127.0.0.1:5174>。页面支持 10 条官方评测样本切换、
+Readable / Raw vocabulary、Layer × Position token grid、候选固定、完整词表
+排名热力图和跨层/跨位置轨迹。
 
-页面已接入本地 `Qwen3.5-4B` 与官方预拟合 J-lens。先从仓库根目录启动
+页面已接入本地 `Qwen3.5-4B` 与 Anthropic walkthrough 指定的预拟合 J-lens。先从仓库根目录启动
 真实分析 API：
 
 ```bash
 .venv/bin/python -m jspace_server.app
 ```
 
-再启动前端。提示词一旦变化，旧结果会立即清空。页面按官方 Qwen
+默认从 `~/models/Qwen/Qwen3.5-4B` 加载模型；可用
+`JSPACE_MODEL_PATH` 和 `JSPACE_LENS_PATH` 覆盖模型与 Lens 路径。再启动前端。
+提示词一旦变化，旧结果会立即清空。页面按官方 Qwen
 walkthrough 使用 `mask_display=True` 的规则选择可读 token，同时保留候选
 在完整词表中的真实 rank；固定 token 的跨层轨迹来自官方同款 rank tensor，
 最终层面板则单独保留未经筛选的真实下一 token 分布。运行说明见

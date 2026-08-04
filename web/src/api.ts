@@ -13,11 +13,15 @@ export async function fetchRuntimeStatus(signal?: AbortSignal): Promise<RuntimeS
   return readJson<RuntimeStatus>(response);
 }
 
-export async function analyzePrompt(prompt: string): Promise<AnalysisResult> {
+export async function analyzePrompt(
+  prompt: string,
+  signal?: AbortSignal,
+): Promise<AnalysisResult> {
   const response = await fetch("/api/analyze", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ prompt, top_k: 10, max_tokens: 64 }),
+    signal,
   });
   return readJson<AnalysisResult>(response);
 }
