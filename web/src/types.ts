@@ -1,5 +1,6 @@
 export type Metric = "rank" | "probability";
 export type RunState = "idle" | "running" | "success" | "error";
+export type VocabularyMode = "readable" | "raw";
 
 export type RuntimeStatus = {
   state: "not_loaded" | "loading" | "ready" | "error";
@@ -34,6 +35,7 @@ export type AnalysisCell = {
   logit_gap: number;
   changed: boolean;
   candidates: Candidate[];
+  raw_candidates?: Candidate[];
 };
 
 export type FinalOutput = {
@@ -60,6 +62,8 @@ export type AnalysisResult = {
   final_outputs: FinalOutput[];
   tracked_token_ids: number[];
   rank_tracks: Record<string, number[][]>;
+  rank_tracks_truncated: boolean;
+  max_tracked_tokens: number;
   vocab: Record<string, string>;
   default_selection: {
     layer: number;

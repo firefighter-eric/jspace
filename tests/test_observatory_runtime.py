@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 import torch
 
 from jlens.lens import JacobianLens
@@ -60,3 +61,65 @@ def test_observatory_final_output_and_rank_tracks_are_unfiltered_and_exact():
     ).tolist()
     final_layer_index = result["layers"].index(model.n_layers - 1)
     assert result["rank_tracks"][str(token_id)][final_layer_index] == expected_ranks
+
+
+def test_observatory_exposes_literal_raw_top_k_for_every_cell():
+    runtime, model, lens = _runtime_with_tiny_model()
+    prompt = "the quick brown fox"
+    top_k = 4
+    result = runtime._analyze_loaded(prompt, top_k=top_k, max_tokens=32)
+
+    lens_logits, model_logits, _ = lens.apply(
+        model, prompt, layers=lens.source_layers
+    )
+    for layer_index, layer in enumerate(result["layers"]):
+        expected_logits = (
+            model_logits if layer == model.n_layers - 1 else lens_logits[layer]
+        )
+        expected_ids = expected_logits.topk(top_k, dim=-1).indices.tolist()
+        for position, cell in enumerate(result["cells"][layer_index]):
+            raw_candidates = cell["raw_candidates"]
+            assert [candidate["id"] for candidate in raw_candidates] == expected_ids[
+                position
+            ]
+            assert [candidate["rank"] for candidate in raw_candidates] == list(
+                range(1, top_k + 1)
+            )
+            assert all(
+                candidate["id"] in result["tracked_token_ids"]
+                for candidate in raw_candidates
+            )
+
+    assert [
+        candidate["id"] for candidate in result["final_outputs"][0]["candidates"]
+    ] == [
+        candidate["id"]
+        for candidate in result["cells"][-1][0]["raw_candidates"]
+    ]
+
+
+def test_observatory_preserves_trailing_space_and_reports_exact_truncation():
+    runtime, _, _ = _runtime_with_tiny_model()
+
+    exact = runtime.analyze("abc", top_k=4, max_tokens=4)
+    assert exact["prompt"] == "abc"
+    assert exact["truncated"] is False
+
+    trailing = runtime.analyze("abc ", top_k=4, max_tokens=4)
+    assert trailing["prompt"] == "abc "
+    assert trailing["truncated"] is True
+
+    with pytest.raises(ValueError, match="must not be empty"):
+        runtime.analyze("   ", top_k=4, max_tokens=4)
+
+
+def test_observatory_caps_eager_rank_tracks(monkeypatch):
+    runtime, _, _ = _runtime_with_tiny_model()
+    monkeypatch.setattr("jspace_server.runtime.MAX_TRACKED_TOKENS", 2)
+
+    result = runtime._analyze_loaded("the quick brown fox", top_k=4, max_tokens=32)
+
+    assert len(result["tracked_token_ids"]) == 2
+    assert len(result["rank_tracks"]) == 2
+    assert result["rank_tracks_truncated"] is True
+    assert result["max_tracked_tokens"] == 2

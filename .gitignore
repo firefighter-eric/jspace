@@ -1,3 +1,4 @@
+# Modified for the jspace project; original ignore rules Copyright Anthropic PBC.
 __pycache__/
 *.py[cod]
 *.egg-info/

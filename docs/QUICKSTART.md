@@ -1,4 +1,4 @@
-# 快速开始：使用官方预拟合 J-lens
+# 快速开始：使用 Anthropic walkthrough 指定的预拟合 J-lens
 
 最快路径是加载 Anthropic walkthrough 指定的 Qwen 模型和 Neuronpedia 上已经拟合好的 J-lens，不需要先计算 Jacobian。
 
@@ -16,10 +16,11 @@ uv sync --extra dev
 uv run --with jupyter jupyter lab walkthrough.ipynb
 ```
 
-项目已经在忽略目录中放置官方 Qwen3.5-4B 预拟合 J-lens。模型权重位于
-`/Users/eric/models/Qwen/Qwen3.5-4B`，已完成 Hugging Face 清单与校验和验证。
+项目已经在忽略目录中放置 walkthrough 指定的 Qwen3.5-4B 预拟合 J-lens。
+本机模型权重位于 `~/models/Qwen/Qwen3.5-4B`，可离线加载；Lens 的远端
+revision、字节数和 SHA-256 记录在[预拟合 Lens 归档](PREFITTED_LENS.md)。
 
-## 2. 官方预拟合 J-lens
+## 2. walkthrough 指定的预拟合 J-lens
 
 官方 walkthrough 列出了两个可直接使用的组合：
 
@@ -56,7 +57,7 @@ import torch
 import transformers
 import jlens
 
-model_name = "/Users/eric/models/Qwen/Qwen3.5-4B"
+model_name = str(Path.home() / "models/Qwen/Qwen3.5-4B")
 lens_file = (
     "qwen3.5-4b/jlens/Salesforce-wikitext/"
     "Qwen3.5-4B_jacobian_lens_n1000.pt"

@@ -1,4 +1,4 @@
-# 官方预拟合 J-lens
+# Anthropic walkthrough 使用的预拟合 J-lens
 
 ## 已下载文件
 
@@ -40,4 +40,7 @@ print(lens)
 
 上游 `.gitignore` 已包含 `*.pt`，所以 Lens 保存在项目工作目录中，但不会被 Git 跟踪。这避免把约 406 MB 的模型派生文件放进普通源码提交。换电脑或清理工作区后，可以根据[快速开始](QUICKSTART.md)中的 Hugging Face 配置重新下载。
 
-模型权重没有复制到仓库；首次加载 `Qwen/Qwen3.5-4B` 时由 Transformers 下载到 Hugging Face 缓存。
+模型权重没有复制到仓库。当前交互服务从
+`~/models/Qwen/Qwen3.5-4B` 离线加载；可用 `JSPACE_MODEL_PATH` 覆盖该路径。
+walkthrough 也可以按 Transformers 的标准流程从 Hugging Face 下载或使用
+已有缓存。

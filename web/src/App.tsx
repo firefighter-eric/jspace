@@ -1,10 +1,15 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { analyzePrompt, fetchRuntimeStatus } from "./api";
 import { layerIndex, normalizedToken, PALETTE } from "./analysis";
 import { OfficialExplorer } from "./components/OfficialExplorer";
 import { PromptComposer } from "./components/PromptComposer";
 import { samples } from "./data";
-import type { AnalysisResult, RunState, RuntimeStatus } from "./types";
+import type {
+  AnalysisResult,
+  RunState,
+  RuntimeStatus,
+  VocabularyMode,
+} from "./types";
 
 function App() {
   const [activeSampleId, setActiveSampleId] = useState<string | null>(samples[0].id);
@@ -17,7 +22,9 @@ function App() {
   const [pinned, setPinned] = useState<Set<number>>(() => new Set());
   const [activePinnedToken, setActivePinnedToken] = useState<number | null>(null);
   const [showWhitespace, setShowWhitespace] = useState(false);
+  const [vocabularyMode, setVocabularyMode] = useState<VocabularyMode>("readable");
   const [error, setError] = useState<string | null>(null);
+  const analysisControllerRef = useRef<AbortController | null>(null);
 
   const refreshStatus = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -32,10 +39,15 @@ function App() {
   useEffect(() => {
     const controller = new AbortController();
     void refreshStatus(controller.signal);
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      analysisControllerRef.current?.abort();
+    };
   }, [refreshStatus]);
 
   const clearResult = useCallback(() => {
+    analysisControllerRef.current?.abort();
+    analysisControllerRef.current = null;
     setAnalysis(null);
     setRunState("idle");
     setError(null);
@@ -54,6 +66,9 @@ function App() {
 
   async function handleRun() {
     if (!prompt.trim() || runState === "running") return;
+    const controller = new AbortController();
+    analysisControllerRef.current?.abort();
+    analysisControllerRef.current = controller;
     setAnalysis(null);
     setPinned(new Set());
     setActivePinnedToken(null);
@@ -61,7 +76,8 @@ function App() {
     setRunState("running");
     void refreshStatus();
     try {
-      const result = await analyzePrompt(prompt);
+      const result = await analyzePrompt(prompt, controller.signal);
+      if (controller.signal.aborted) return;
       const initialLayer = result.layers.includes(16) ? 16 : result.default_selection.layer;
       setAnalysis(result);
       setSelectedLayer(initialLayer);
@@ -73,14 +89,21 @@ function App() {
             .sort((left, right) => Number(!(result.vocab[String(left)] ?? "").startsWith(" ")) - Number(!(result.vocab[String(right)] ?? "").startsWith(" ")))
         : [];
       const defaultCell = result.cells[layerIndex(result, initialLayer)][result.default_selection.position];
-      const defaultPin = targetIds[0] ?? (result.tracked_token_ids.includes(defaultCell.top_id) ? defaultCell.top_id : null);
+      const visibleTopId = vocabularyMode === "raw"
+        ? (defaultCell.raw_candidates?.[0]?.id ?? defaultCell.top_id)
+        : defaultCell.top_id;
+      const defaultPin = targetIds[0] ?? (result.tracked_token_ids.includes(visibleTopId) ? visibleTopId : null);
       setPinned(defaultPin == null ? new Set() : new Set([defaultPin]));
       setActivePinnedToken(defaultPin);
       setRunState("success");
     } catch (analysisError) {
+      if (analysisError instanceof DOMException && analysisError.name === "AbortError") return;
       setError(analysisError instanceof Error ? analysisError.message : String(analysisError));
       setRunState("error");
     } finally {
+      if (analysisControllerRef.current === controller) {
+        analysisControllerRef.current = null;
+      }
       void refreshStatus();
     }
   }
@@ -144,19 +167,22 @@ function App() {
       <header className="anth-header">
         <div>
           <h1>Anthropic Jacobian Lens <span>— Official-style Interactive UI</span></h1>
-          <p>Qwen3.5-4B · n1000 · official mask_display=True · full-sentence input</p>
+          <p>Qwen3.5-4B · n1000 · readable + raw vocabulary · full-sentence input</p>
         </div>
         <a href="https://github.com/anthropics/jacobian-lens" target="_blank" rel="noreferrer" aria-label="Anthropic 官方仓库">?</a>
       </header>
 
       <PromptComposer
+          activeSampleId={activeSampleId}
           prompt={prompt}
           runState={runState}
           runtimeStatus={runtimeStatus}
           tokenCount={analysis?.tokens.length ?? null}
+          truncated={analysis?.truncated ?? false}
           elapsedMs={analysis?.elapsed_ms ?? null}
           error={error}
           onPromptChange={handlePromptChange}
+          onSelectSample={(sample) => handlePromptChange(sample.prompt)}
           onRun={() => void handleRun()}
         />
       <div className="official-shell">
@@ -168,15 +194,17 @@ function App() {
           pinned={pinned}
           activePinnedToken={activePinnedToken}
           showWhitespace={showWhitespace}
+          vocabularyMode={vocabularyMode}
           onSelect={handleSelect}
           onPin={togglePin}
           onActivatePin={activatePin}
           onClearPins={clearPins}
           onShowWhitespaceChange={setShowWhitespace}
+          onVocabularyModeChange={setVocabularyMode}
         />
       </div>
       <footer className="anth-footer">
-        Anthropic Jacobian Lens — local interactive slice · {analysis ? `${analysis.tokens.length} positions × ${analysis.layers.length} layers · top-10` : "waiting for analysis"}
+        Anthropic Jacobian Lens — local interactive slice · {analysis ? `${analysis.tokens.length} positions × ${analysis.layers.length} layers · top-10 · ${vocabularyMode}` : "waiting for analysis"}
       </footer>
     </div>
   );

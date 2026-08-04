@@ -15,7 +15,13 @@ import {
   rankColor,
   rankTrajectory,
 } from "../analysis";
-import type { AnalysisResult, Candidate, RunState } from "../types";
+import type {
+  AnalysisCell,
+  AnalysisResult,
+  Candidate,
+  RunState,
+  VocabularyMode,
+} from "../types";
 
 type ExplorerProps = {
   result: AnalysisResult | null;
@@ -25,11 +31,13 @@ type ExplorerProps = {
   pinned: Set<number>;
   activePinnedToken: number | null;
   showWhitespace: boolean;
+  vocabularyMode: VocabularyMode;
   onSelect: (layer: number, position: number) => void;
   onPin: (tokenId: number) => void;
   onActivatePin: (tokenId: number) => void;
   onClearPins: () => void;
   onShowWhitespaceChange: (value: boolean) => void;
+  onVocabularyModeChange: (value: VocabularyMode) => void;
 };
 
 type SliceTableProps = {
@@ -44,12 +52,19 @@ type SliceTableProps = {
     onSelect: () => void;
   }>;
   pinned: Set<number>;
+  trackedTokenIds: Set<number>;
   showWhitespace: boolean;
   onPin: (tokenId: number) => void;
 };
 
 function tokenLabel(token: string, showWhitespace: boolean) {
   return displayToken(token, showWhitespace);
+}
+
+function candidatesFor(cell: AnalysisCell, mode: VocabularyMode) {
+  return mode === "raw" && cell.raw_candidates?.length
+    ? cell.raw_candidates
+    : cell.candidates;
 }
 
 function compactRank(rank: number) {
@@ -63,6 +78,7 @@ function SliceTable({
   subtitle,
   rows,
   pinned,
+  trackedTokenIds,
   showWhitespace,
   onPin,
 }: SliceTableProps) {
@@ -77,14 +93,15 @@ function SliceTable({
           <div
             key={row.key}
             className={`slice-row ${row.selected ? "selected" : ""}`}
-            role="button"
-            tabIndex={0}
             onClick={row.onSelect}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" || event.key === " ") row.onSelect();
-            }}
           >
-            <span className="slice-row-label">{row.label}</span>
+            <button
+              type="button"
+              className="slice-row-label"
+              aria-label={`Select ${title} ${row.label}`}
+            >
+              {row.label}
+            </button>
             {row.context ? <span className="slice-row-context" title={row.context}>{row.context}</span> : null}
             <div className="slice-candidates">
               {row.candidates.map((candidate) => (
@@ -92,7 +109,10 @@ function SliceTable({
                   type="button"
                   key={candidate.id}
                   className={pinned.has(candidate.id) ? "pinned" : ""}
-                  title={`token ${candidate.id} · full-vocab rank #${candidate.rank}`}
+                  disabled={!trackedTokenIds.has(candidate.id)}
+                  title={trackedTokenIds.has(candidate.id)
+                    ? `token ${candidate.id} · full-vocab rank #${candidate.rank} · click to pin`
+                    : `token ${candidate.id} · full-vocab rank #${candidate.rank} · rank track not precomputed`}
                   onClick={(event) => {
                     event.stopPropagation();
                     onPin(candidate.id);
@@ -115,10 +135,12 @@ function TokenMatrix({
   selectedLayer,
   selectedPosition,
   pinned,
+  trackedTokenIds,
   showWhitespace,
+  vocabularyMode,
   onSelect,
   onPin,
-}: Omit<ExplorerProps, "runState" | "activePinnedToken" | "onActivatePin" | "onClearPins" | "onShowWhitespaceChange"> & { result: AnalysisResult }) {
+}: Omit<ExplorerProps, "runState" | "activePinnedToken" | "onActivatePin" | "onClearPins" | "onShowWhitespaceChange" | "onVocabularyModeChange"> & { result: AnalysisResult; trackedTokenIds: Set<number> }) {
   const reversedLayers = useMemo(() => [...result.layers].reverse(), [result.layers]);
   const columns = `38px repeat(${result.tokens.length}, minmax(46px, 1fr))`;
   const minWidth = Math.max(660, 38 + result.tokens.length * 48);
@@ -135,13 +157,15 @@ function TokenMatrix({
     <section className="matrix-card">
       <header className="card-heading">
         <div><span className="eyebrow">PRIMARY VIEW</span><h1>Layer × Position token grid</h1></div>
-        <div className="matrix-legend" aria-label="排名图例">
-          <span>Rank 1</span>
-          {[1, 5, 25, 125, 625, 3_125, 15_625, 78_125].map((rank) => (
-            <i key={rank} style={{ background: rankColor(rank, result.vocab_size) }} />
-          ))}
-          <span>词表底部</span>
-        </div>
+        {vocabularyMode === "readable" ? (
+          <div className="matrix-legend" aria-label="完整词表排名图例">
+            <span>Rank 1</span>
+            {[1, 5, 25, 125, 625, 3_125, 15_625, 78_125].map((rank) => (
+              <i key={rank} style={{ background: rankColor(rank, result.vocab_size) }} />
+            ))}
+            <span>词表底部</span>
+          </div>
+        ) : <span className="raw-mode-note">literal full-vocabulary Top‑1</span>}
       </header>
       <div className="matrix-scroll" ref={scrollRef}>
         <div className="matrix-grid" style={{ gridTemplateColumns: columns, minWidth }}>
@@ -157,24 +181,29 @@ function TokenMatrix({
               >
                 {layer}
               </button>,
-              ...result.cells[rowIndex].map((cell, position) => (
-                <button
-                  type="button"
-                  key={`${layer}-${position}`}
-                  className={`matrix-token ${selectedLayer === layer && selectedPosition === position ? "selected" : ""} ${pinned.has(cell.top_id) ? "pinned" : ""}`}
-                  style={{ "--rank-color": rankColor(cell.top_rank, result.vocab_size) } as CSSProperties}
-                  title={`L${layer} · P${position} · token ${cell.top_id} · full-vocab #${cell.top_rank}`}
-                  aria-label={`Layer ${layer}, Position ${position}, ${tokenLabel(cell.top_token, true)}, rank ${cell.top_rank}`}
-                  onClick={() => onSelect(layer, position)}
-                  onDoubleClick={() => onPin(cell.top_id)}
-                  onMouseEnter={(event) => {
-                    if (event.shiftKey) onSelect(layer, position);
-                  }}
-                >
-                  <span>{tokenLabel(cell.top_token, showWhitespace)}</span>
-                  {cell.top_rank > 1 ? <sup>{compactRank(cell.top_rank)}</sup> : null}
-                </button>
-              )),
+              ...result.cells[rowIndex].map((cell, position) => {
+                const topCandidate = candidatesFor(cell, vocabularyMode)[0];
+                return (
+                  <button
+                    type="button"
+                    key={`${layer}-${position}`}
+                    className={`matrix-token ${selectedLayer === layer && selectedPosition === position ? "selected" : ""} ${pinned.has(topCandidate.id) ? "pinned" : ""} ${trackedTokenIds.has(topCandidate.id) ? "" : "untrackable"}`}
+                    style={{ "--rank-color": rankColor(topCandidate.rank, result.vocab_size) } as CSSProperties}
+                    title={`L${layer} · P${position} · token ${topCandidate.id} · full-vocab #${topCandidate.rank}${trackedTokenIds.has(topCandidate.id) ? " · double-click to pin" : " · rank track not precomputed"}`}
+                    aria-label={`Layer ${layer}, Position ${position}, ${tokenLabel(topCandidate.token, true)}, rank ${topCandidate.rank}`}
+                    onClick={() => onSelect(layer, position)}
+                    onDoubleClick={() => {
+                      if (trackedTokenIds.has(topCandidate.id)) onPin(topCandidate.id);
+                    }}
+                    onMouseEnter={(event) => {
+                      if (event.shiftKey) onSelect(layer, position);
+                    }}
+                  >
+                    <span>{tokenLabel(topCandidate.token, showWhitespace)}</span>
+                    {topCandidate.rank > 1 ? <sup>{compactRank(topCandidate.rank)}</sup> : null}
+                  </button>
+                );
+              }),
             ];
           })}
         </div>
@@ -193,7 +222,11 @@ function TokenMatrix({
           ))}
         </div>
       </div>
-      <p className="matrix-hint">单击选择单元 · 双击固定该单元的 Top‑1 token · 红色上标为完整词表排名</p>
+      <p className="matrix-hint">
+        {vocabularyMode === "readable"
+          ? "Readable 显示过滤后的首个可读 token · 红色上标为完整词表排名"
+          : "Raw vocabulary 显示未过滤的真实 Top‑1 token · 候选顺序就是完整词表顺序"}
+      </p>
     </section>
   );
 }
@@ -212,33 +245,36 @@ function PinnedTokens({
     <div className="pinned-toolbar">
       <span><Pin size={13} />固定 token</span>
       <div className="pin-list">
-        {ids.map((tokenId, index) => (
-          <button
-            type="button"
-            key={tokenId}
-            className={activePinnedToken === tokenId ? "active" : ""}
-            style={{ "--pin-color": PALETTE[index % PALETTE.length] } as CSSProperties}
-            onClick={() => onActivatePin(tokenId)}
-            title={`token ${tokenId}`}
-          >
-            <i />{tokenLabel(result.vocab[String(tokenId)] ?? `[${tokenId}]`, showWhitespace)}
-            <span
-              role="button"
-              tabIndex={0}
-              aria-label="取消固定"
-              onClick={(event) => {
-                event.stopPropagation();
-                onPin(tokenId);
-              }}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") {
-                  event.stopPropagation();
-                  onPin(tokenId);
-                }
-              }}
-            ><X size={11} /></span>
-          </button>
-        ))}
+        {ids.map((tokenId, index) => {
+          const label = tokenLabel(
+            result.vocab[String(tokenId)] ?? `[${tokenId}]`,
+            showWhitespace,
+          );
+          return (
+            <div
+              key={tokenId}
+              className={`pin-chip ${activePinnedToken === tokenId ? "active" : ""}`}
+              style={{ "--pin-color": PALETTE[index % PALETTE.length] } as CSSProperties}
+            >
+              <button
+                type="button"
+                className="pin-activate"
+                onClick={() => onActivatePin(tokenId)}
+                title={`token ${tokenId}`}
+              >
+                <i />{label}
+              </button>
+              <button
+                type="button"
+                className="pin-remove"
+                aria-label={`取消固定 ${label}`}
+                onClick={() => onPin(tokenId)}
+              >
+                <X size={11} />
+              </button>
+            </div>
+          );
+        })}
         {ids.length ? <button type="button" className="clear-pins" onClick={onClearPins}>全部清除</button> : <small>点击右侧候选即可固定</small>}
       </div>
     </div>
@@ -361,11 +397,13 @@ export function OfficialExplorer({
   pinned,
   activePinnedToken,
   showWhitespace,
+  vocabularyMode,
   onSelect,
   onPin,
   onActivatePin,
   onClearPins,
   onShowWhitespaceChange,
+  onVocabularyModeChange,
 }: ExplorerProps) {
   if (!result) {
     return (
@@ -382,6 +420,8 @@ export function OfficialExplorer({
 
   const selectedLayerIndex = layerIndex(result, selectedLayer);
   const inputToken = result.tokens[selectedPosition];
+  const hasRawVocabulary = Boolean(result.cells[0]?.[0]?.raw_candidates?.length);
+  const trackedTokenIds = new Set(result.tracked_token_ids);
   const tracked = [...pinned]
     .filter((tokenId) => result.rank_tracks[String(tokenId)])
     .slice(0, PALETTE.length)
@@ -395,7 +435,10 @@ export function OfficialExplorer({
     key: `layer-${layer}`,
     label: String(layer),
     selected: layer === selectedLayer,
-    candidates: result.cells[layerIndex(result, layer)][selectedPosition].candidates,
+    candidates: candidatesFor(
+      result.cells[layerIndex(result, layer)][selectedPosition],
+      vocabularyMode,
+    ),
     onSelect: () => onSelect(layer, selectedPosition),
   }));
   const byPositionRows = result.tokens.map((token) => ({
@@ -403,7 +446,10 @@ export function OfficialExplorer({
     label: String(token.index),
     context: tokenLabel(token.text, showWhitespace),
     selected: token.index === selectedPosition,
-    candidates: result.cells[selectedLayerIndex][token.index].candidates,
+    candidates: candidatesFor(
+      result.cells[selectedLayerIndex][token.index],
+      vocabularyMode,
+    ),
     onSelect: () => onSelect(selectedLayer, token.index),
   }));
   const layerSeries = tracked.map((item) => ({
@@ -425,6 +471,26 @@ export function OfficialExplorer({
           <i />
           <span>Layer <strong>{selectedLayer}</strong></span>
         </div>
+        <div className="vocabulary-toggle" role="group" aria-label="Vocabulary candidate mode">
+          <button
+            type="button"
+            aria-pressed={vocabularyMode === "readable"}
+            onClick={() => onVocabularyModeChange("readable")}
+          >
+            Readable
+          </button>
+          <button
+            type="button"
+            aria-pressed={vocabularyMode === "raw"}
+            disabled={!hasRawVocabulary}
+            title={hasRawVocabulary
+              ? "Show literal full-vocabulary Top-10"
+              : "Run J-lens again to load raw candidates"}
+            onClick={() => onVocabularyModeChange("raw")}
+          >
+            Raw vocabulary
+          </button>
+        </div>
         <label className="whitespace-toggle">
           <input type="checkbox" checked={showWhitespace} onChange={(event) => onShowWhitespaceChange(event.target.checked)} />
           whitespace
@@ -438,13 +504,15 @@ export function OfficialExplorer({
           selectedLayer={selectedLayer}
           selectedPosition={selectedPosition}
           pinned={pinned}
+          trackedTokenIds={trackedTokenIds}
           showWhitespace={showWhitespace}
+          vocabularyMode={vocabularyMode}
           onSelect={onSelect}
           onPin={onPin}
         />
         <div className="slice-tables">
-          <SliceTable title={`By Layer · Pos ${selectedPosition}`} subtitle={tokenLabel(inputToken.text, showWhitespace)} rows={byLayerRows} pinned={pinned} showWhitespace={showWhitespace} onPin={onPin} />
-          <SliceTable title={`By Position · Layer ${selectedLayer}`} subtitle={`${result.tokens.length} positions`} rows={byPositionRows} pinned={pinned} showWhitespace={showWhitespace} onPin={onPin} />
+          <SliceTable title={`By Layer · Pos ${selectedPosition}`} subtitle={tokenLabel(inputToken.text, showWhitespace)} rows={byLayerRows} pinned={pinned} trackedTokenIds={trackedTokenIds} showWhitespace={showWhitespace} onPin={onPin} />
+          <SliceTable title={`By Position · Layer ${selectedLayer}`} subtitle={`${result.tokens.length} positions`} rows={byPositionRows} pinned={pinned} trackedTokenIds={trackedTokenIds} showWhitespace={showWhitespace} onPin={onPin} />
         </div>
       </section>
 
@@ -473,7 +541,14 @@ export function OfficialExplorer({
 
       <section className="official-footnote">
         <CircleHelp size={14} />
-        <span>候选使用官方 <code>mask_display=True</code> 只过滤显示内容；所有红色上标、热力图和曲线均为未过滤完整词表排名。</span>
+        {vocabularyMode === "readable" ? (
+          <span><strong>Readable:</strong> 使用官方 <code>mask_display=True</code> 隐藏不可读 token；红色上标仍是未过滤完整词表排名。</span>
+        ) : (
+          <span><strong>Raw vocabulary:</strong> 不进行显示过滤；从 #1 开始展示模型完整词表中的真实 Top‑10。</span>
+        )}
+        {result.rank_tracks_truncated ? (
+          <span className="track-limit">为控制响应大小，只预计算排名最高频的 {result.max_tracked_tokens} 个候选轨迹；灰色候选仍可查看，但不可固定。</span>
+        ) : null}
       </section>
     </main>
   );
