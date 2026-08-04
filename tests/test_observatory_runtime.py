@@ -98,16 +98,26 @@ def test_observatory_exposes_literal_raw_top_k_for_every_cell():
     ]
 
 
-def test_observatory_preserves_trailing_space_and_reports_exact_truncation():
-    runtime, _, _ = _runtime_with_tiny_model()
+def test_observatory_preserves_prompt_verbatim_and_reports_exact_truncation():
+    runtime, model, _ = _runtime_with_tiny_model()
 
-    exact = runtime.analyze("abc", top_k=4, max_tokens=4)
+    exact = runtime.analyze("abc", top_k=4, max_tokens=5)
     assert exact["prompt"] == "abc"
     assert exact["truncated"] is False
+    assert [token["id"] for token in exact["tokens"]] == model.encode(
+        "abc", max_length=6
+    )[0].tolist()
 
-    trailing = runtime.analyze("abc ", top_k=4, max_tokens=4)
+    trailing = runtime.analyze("abc ", top_k=4, max_tokens=5)
     assert trailing["prompt"] == "abc "
-    assert trailing["truncated"] is True
+    assert trailing["truncated"] is False
+    assert [token["id"] for token in trailing["tokens"]] == model.encode(
+        "abc ", max_length=6
+    )[0].tolist()
+    assert len(trailing["tokens"]) == len(exact["tokens"]) + 1
+
+    truncated = runtime.analyze("abcd", top_k=4, max_tokens=4)
+    assert truncated["truncated"] is True
 
     with pytest.raises(ValueError, match="must not be empty"):
         runtime.analyze("   ", top_k=4, max_tokens=4)

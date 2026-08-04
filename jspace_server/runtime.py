@@ -162,8 +162,8 @@ class AnalysisRuntime:
         final_layer = model.n_layers - 1
         layers = sorted(set(lens.source_layers) | {final_layer})
         # Encode one token beyond the display limit so truncation is exact.
-        # The prompt itself is intentionally not stripped: official eval
-        # prompts use a trailing space as a real tokenizer position.
+        # Do not normalize the prompt: analyze exactly the text supplied by
+        # the caller, including any intentional leading or trailing whitespace.
         encoded_ids = model.encode(prompt, max_length=max_tokens + 1)
         truncated = encoded_ids.shape[1] > max_tokens
         input_ids = encoded_ids[:, :max_tokens]

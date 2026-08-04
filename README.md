@@ -44,7 +44,7 @@ npm install
 npm run dev
 ```
 
-然后打开 <http://127.0.0.1:5174>。页面支持 10 条官方评测样本切换、
+然后打开 <http://127.0.0.1:5174>。页面支持 10 条基于官方评测的预置样本切换、
 Readable / Raw vocabulary、Layer × Position token grid、候选固定、完整词表
 排名热力图和跨层/跨位置轨迹。
 
